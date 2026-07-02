@@ -1,0 +1,175 @@
+name: climbing-ge
+
+x-app-image: &app-image
+  build:
+    context: ../html
+    dockerfile: ../docker/php/Dockerfile
+    additional_contexts:
+      configs: ./php
+    args:
+      WWWUSER: ${WWWUSER:-1000}
+      WWWGROUP: ${WWWGROUP:-1000}
+  image: climbing-ge/app:latest
+
+x-app-env: &app-env
+  DB_CONNECTION: mysql
+  DB_HOST: mysql
+  DB_PORT: 3306
+  DB_DATABASE: ${DB_DATABASE:-climbing_loc_db}
+  DB_USERNAME: ${DB_USERNAME:-climbing}
+  DB_PASSWORD: ${DB_PASSWORD:-climbing}
+  REDIS_HOST: redis
+  REDIS_PORT: 6379
+  REDIS_PASSWORD: "null"
+  CACHE_DRIVER: ${CACHE_DRIVER:-file}
+  SESSION_DRIVER: ${SESSION_DRIVER:-file}
+  QUEUE_CONNECTION: ${QUEUE_CONNECTION:-database}
+
+services:
+  app:
+    <<: *app-image
+    container_name: climbing_app
+    restart: unless-stopped
+    environment:
+      <<: *app-env
+    volumes:
+      - ../html:/var/www/html
+      - vendor:/var/www/html/vendor
+      - node_modules:/var/www/html/node_modules
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    networks:
+      - climbing
+
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: climbing_nginx
+    restart: unless-stopped
+    ports:
+      - "${APP_PORT:-80}:80"
+    volumes:
+      - ../html:/var/www/html:ro
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+    depends_on:
+      - app
+    networks:
+      - climbing
+
+  mysql:
+    image: mysql:8.0
+    container_name: climbing_mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: ${DB_DATABASE:-climbing_loc_db}
+      MYSQL_USER: ${DB_USERNAME:-climbing}
+      MYSQL_PASSWORD: ${DB_PASSWORD:-climbing}
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-root}
+    ports:
+      - "${DB_FORWARD_PORT:-3306}:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./mysql/init:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-p${DB_ROOT_PASSWORD:-root}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks:
+      - climbing
+
+  redis:
+    image: redis:7-alpine
+    container_name: climbing_redis
+    restart: unless-stopped
+    ports:
+      - "${REDIS_FORWARD_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - climbing
+
+  queue:
+    <<: *app-image
+    container_name: climbing_queue
+    restart: unless-stopped
+    entrypoint: ["entrypoint.sh"]
+    command: ["php", "artisan", "queue:work", "--tries=3", "--sleep=3"]
+    environment:
+      <<: *app-env
+    volumes:
+      - ../html:/var/www/html
+      - vendor:/var/www/html/vendor
+      - node_modules:/var/www/html/node_modules
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    networks:
+      - climbing
+
+  scheduler:
+    <<: *app-image
+    container_name: climbing_scheduler
+    restart: unless-stopped
+    entrypoint: ["entrypoint.sh"]
+    command: ["php", "artisan", "schedule:work"]
+    environment:
+      <<: *app-env
+    volumes:
+      - ../html:/var/www/html
+      - vendor:/var/www/html/vendor
+      - node_modules:/var/www/html/node_modules
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    networks:
+      - climbing
+
+  horizon:
+    <<: *app-image
+    container_name: climbing_horizon
+    restart: unless-stopped
+    profiles: ["horizon"]
+    entrypoint: ["entrypoint.sh"]
+    command: ["php", "artisan", "horizon"]
+    environment:
+      <<: *app-env
+    volumes:
+      - ../html:/var/www/html
+      - vendor:/var/www/html/vendor
+      - node_modules:/var/www/html/node_modules
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    networks:
+      - climbing
+
+  node:
+    image: node:20-bullseye
+    container_name: climbing_node
+    profiles: ["dev"]
+    working_dir: /var/www/html
+    command: sh -c "npm install && npm run watch"
+    volumes:
+      - ../html:/var/www/html
+      - node_modules:/var/www/html/node_modules
+    networks:
+      - climbing
+
+networks:
+  climbing:
+    driver: bridge
+
+volumes:
+  mysql_data:
+  redis_data:
+  vendor:
+  node_modules:
