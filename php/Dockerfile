@@ -50,6 +50,8 @@ FROM php:${PHP_VERSION}-fpm-bullseye AS runtime
 ARG WWWUSER=1000
 ARG WWWGROUP=1000
 
+ENV MAKEFLAGS="-j1"
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
         libpng-dev \
         libjpeg62-turbo-dev \
@@ -66,7 +68,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         cron \
         supervisor \
     && docker-php-ext-configure gd --with-jpeg --with-webp --with-freetype \
-    && docker-php-ext-install -j"$(nproc)" \
+    && docker-php-ext-install \
         pdo_mysql \
         mysqli \
         gd \
@@ -77,11 +79,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         pcntl \
         opcache \
         soap \
-    && pecl install redis \
+    && curl -sSL https://pecl.php.net/get/redis-6.2.0.tgz -o /tmp/redis.tgz \
+    && pecl install /tmp/redis.tgz \
+    && rm /tmp/redis.tgz \
     && docker-php-ext-enable redis \
-    && apt-get purge -y --auto-remove \
-        libpng-dev libjpeg62-turbo-dev libwebp-dev libfreetype6-dev \
-        libzip-dev libicu-dev libxml2-dev libonig-dev libcurl4-openssl-dev libssl-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Match host UID/GID so bind-mounted files keep correct ownership
